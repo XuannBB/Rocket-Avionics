@@ -17,7 +17,6 @@ TinyGPSPlus gps;
 
 #define I2C_GPS_ADDR  0x42
 
-//—— 其他传感器初始化 ——
 BMM150 bmm;
 bmm150_mag_data value_offset;
 Adafruit_MSA301 msa;
@@ -200,7 +199,6 @@ void loop() {
     s = gps.time.second();
   }
 
-  //—— 检查 SD 卡状态 ——//
   if (initSD()) {
     sdworking = 1;
   } else {
