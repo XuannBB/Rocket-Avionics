@@ -168,7 +168,7 @@ void serialEvent(Serial p) {
       gpsSpeed    = float(tokens[11]);
       gpsSats     = int(tokens[12]);
 
-      h = (int(tokens[13]) + 8) % 24;
+      h = int(tokens[13]);
       m = int(tokens[14]);
       s = int(tokens[15]);
 
