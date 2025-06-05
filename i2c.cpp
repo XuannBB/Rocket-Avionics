@@ -27,6 +27,12 @@ const uint8_t ADDR_MSA301 = 0x62;
 const uint8_t ADDR_BMP388 = 0x76;
 const uint8_t ADDR_BMM150 = 0x13;
 
+bool sensorWorkingMSA  = false;
+bool sensorWorkingBMP  = false;
+bool sensorWorkingBMM  = false;
+bool sensorWorkingGPS  = false;
+bool sensorWorkingSD   = false;
+
 float temperature = 0;
 float pressure    = 0;
 float altitude    = 0;
@@ -39,11 +45,8 @@ float gpsLng = 0;
 float gpsAlt = 0;
 float gpsSpeed = 0;
 int   gpsSats = 0;
-int sdworking = 0;
-int h;
-int m;
-int s;
-bool  baselineSet     = false;
+int h, m, s;
+bool  baselineSet = false;
 
 bool isI2CPresent(uint8_t addr) {
   Wire.beginTransmission(addr);
@@ -57,7 +60,7 @@ bool initSD() {
   return true;
 }
 
-void calibrate(uint32_t timeout) {
+void calibrateMagnetometer(uint32_t timeout) {
   int16_t x_min, x_max, y_min, y_max, z_min, z_max;
   uint32_t start = millis();
 
@@ -90,59 +93,151 @@ void calibrate(uint32_t timeout) {
 
 void setup() {
   Serial.begin(57600);
-
-  Wire.begin(); 
+  Wire.begin();
 
   loraSerial.begin(57600);
 
-  if (!msa.begin(ADDR_MSA301)) {
-    Serial.println("MSA301 not found");
-    while (1);
+  if (msa.begin(ADDR_MSA301)) {
+    sensorWorkingMSA = true;
+    Serial.println("MSA301 initialized");
+  } else {
+    sensorWorkingMSA = false;
+    Serial.println("MSA301 NOT found at setup()");
   }
-  Serial.println("MSA301 initialized");
 
-  while (bmp388.begin() != ERR_OK) {
-    Serial.println("BMP388 not found");
-    delay(3000);
+  if (bmp388.begin() == ERR_OK) {
+    bmp388.setSamplingMode(bmp388.eUltraPrecision);
+    sensorWorkingBMP = true;
+    Serial.println("BMP388 initialized");
+  } else {
+    sensorWorkingBMP = false;
+    Serial.println("BMP388 NOT found at setup()");
   }
-  bmp388.setSamplingMode(bmp388.eUltraPrecision);
-  Serial.println("BMP388 initialized");
 
-  if (bmm.initialize() == BMM150_E_ID_NOT_CONFORM) {
-    Serial.println("BMM150 not found");
-    while (1);
+  if (bmm.initialize() != BMM150_E_ID_NOT_CONFORM) {
+    sensorWorkingBMM = true;
+    Serial.println("BMM150 initialized");
+    calibrateMagnetometer(10000);
+    Serial.println("Magnetometer calibration done");
+  } else {
+    sensorWorkingBMM = false;
+    Serial.println("BMM150 NOT found at setup()");
   }
-  Serial.println("BMM150 initialized");
 
-  while (!initSD()) {
-    Serial.println("SD init failed, retrying...");
-    delay(2000);
+  if (isI2CPresent(I2C_GPS_ADDR)) {
+    sensorWorkingGPS = true;
+    Serial.println("GPS (I2C) detected at setup()");
+  } else {
+    sensorWorkingGPS = false;
+    Serial.println("GPS (I2C) NOT found at setup()");
   }
-  Serial.println("SD initialized");
 
-  calibrate(10000);
-  Serial.println("Magnetometer calibration done");
+  if (initSD()) {
+    sensorWorkingSD = true;
+    Serial.println("SD initialized");
+  } else {
+    sensorWorkingSD = false;
+    Serial.println("SD init failed at setup()");
+  }
 }
-void readGPS_I2C() {
 
-  
-    if (!isI2CPresent(I2C_GPS_ADDR)) {
+void readGPS_I2C() {
+  if (!sensorWorkingGPS) return;
+
+  if (!isI2CPresent(I2C_GPS_ADDR)) {
+    sensorWorkingGPS = false;
+    Serial.println("GPS lost!");
+    gpsLat = gpsLng = gpsAlt = gpsSpeed = 0;
+    gpsSats = 0;
     return;
   }
 
   Wire.requestFrom((uint8_t)I2C_GPS_ADDR, (uint8_t)32);
   while (Wire.available()) {
-    char c = Wire.read();     
-    gps.encode(c);         
+    char c = Wire.read();
+    gps.encode(c);
   }
 }
 
 void loop() {
-  if (!SD.begin(chipSelect)) {
-    initSD();
+  if (sensorWorkingMSA) {
+    if (!isI2CPresent(ADDR_MSA301)) {
+      sensorWorkingMSA = false;
+      Serial.println("MSA301 lost!");
+      ax = ay = az = 0;
+    }
+  } else {
+    if (msa.begin(ADDR_MSA301)) {
+      sensorWorkingMSA = true;
+      Serial.println("MSA301 re-initialized!");
+    }
   }
 
-  if (isI2CPresent(ADDR_MSA301)) {
+  if (sensorWorkingBMP) {
+    if (!isI2CPresent(ADDR_BMP388)) {
+      sensorWorkingBMP = false;
+      Serial.println("BMP388 lost!");
+      temperature = pressure = altitude = 0;
+    }
+  } else {
+    if (bmp388.begin() == ERR_OK) {
+      bmp388.setSamplingMode(bmp388.eUltraPrecision);
+      sensorWorkingBMP = true;
+      Serial.println("BMP388 re-initialized!");
+    }
+  }
+
+  if (sensorWorkingBMM) {
+    if (!isI2CPresent(ADDR_BMM150)) {
+      sensorWorkingBMM = false;
+      Serial.println("BMM150 lost!");
+      headingDegrees = 0;
+      xyHeading = 0;
+    }
+  } else {
+    if (bmm.initialize() != BMM150_E_ID_NOT_CONFORM) {
+      sensorWorkingBMM = true;
+      Serial.println("BMM150 re-initialized!");
+    }
+  }
+
+  if (sensorWorkingGPS) {
+    if (!isI2CPresent(I2C_GPS_ADDR)) {
+      sensorWorkingGPS = false;
+      Serial.println("GPS lost!");
+      gpsLat = gpsLng = gpsAlt = gpsSpeed = 0;
+      gpsSats = 0;
+    }
+  } else {
+    if (isI2CPresent(I2C_GPS_ADDR)) {
+      sensorWorkingGPS = true;
+      Serial.println("GPS re-detected!");
+    }
+  }
+
+  if (sensorWorkingSD) {
+    if (!SD.begin(chipSelect)) {
+      sensorWorkingSD = false;
+      Serial.println("SD lost!");
+      loraSerial.println("0");
+      Serial.println("Sent 0 over LoRa for SD lost signal.");
+      if (initSD()) {
+        sensorWorkingSD = true;
+        Serial.println("SD re-initialized!");
+      } else {
+        Serial.println("SD still not available after re-init.");
+      }
+      delay(50);
+      return;
+    }
+  } else {
+    if (initSD()) {
+      sensorWorkingSD = true;
+      Serial.println("SD inserted and initialized!");
+    }
+  }
+
+  if (sensorWorkingMSA) {
     sensors_event_t event;
     msa.getEvent(&event);
     ax = event.acceleration.x;
@@ -152,7 +247,7 @@ void loop() {
     ax = ay = az = 0;
   }
 
-  if (isI2CPresent(ADDR_BMP388)) {
+  if (sensorWorkingBMP) {
     temperature = bmp388.readTempC();
     pressure    = bmp388.readPressPa();
     altitude    = bmp388.readAltitudeM();
@@ -166,7 +261,7 @@ void loop() {
     temperature = pressure = altitude = 0;
   }
 
-  if (isI2CPresent(ADDR_BMM150)) {
+  if (sensorWorkingBMM) {
     bmm.read_mag_data();
     float mx = bmm.raw_mag_data.raw_datax - value_offset.x;
     float my = bmm.raw_mag_data.raw_datay - value_offset.y;
@@ -174,35 +269,34 @@ void loop() {
     if (xyHeading < 0) xyHeading += 2 * PI;
     headingDegrees = xyHeading * 180.0 / PI;
   } else {
-    headingDegrees = xyHeading = 0;
+    xyHeading = 0;
+    headingDegrees = 0;
   }
 
   readGPS_I2C();
-
-  if (gps.location.isUpdated()) {
-    gpsLat = gps.location.lat();
-    gpsLng = gps.location.lng();
-  }
-  if (gps.altitude.isUpdated()) {
-    gpsAlt = gps.altitude.meters();
-  }
-  if (gps.speed.isUpdated()) {
-    gpsSpeed = gps.speed.kmph();
-  }
-  if (gps.satellites.isUpdated()) {
-    gpsSats = gps.satellites.value();
-  }
-
-  if (gps.time.isUpdated()) {
-    h = gps.time.hour();    // 24-hour UTC
-    m = gps.time.minute();
-    s = gps.time.second();
-  }
-
-  if (initSD()) {
-    sdworking = 1;
+  if (sensorWorkingGPS) {
+    if (gps.location.isUpdated()) {
+      gpsLat = gps.location.lat();
+      gpsLng = gps.location.lng();
+    }
+    if (gps.altitude.isUpdated()) {
+      gpsAlt = gps.altitude.meters();
+    }
+    if (gps.speed.isUpdated()) {
+      gpsSpeed = gps.speed.kmph();
+    }
+    if (gps.satellites.isUpdated()) {
+      gpsSats = gps.satellites.value();
+    }
+    if (gps.time.isUpdated()) {
+      h = gps.time.hour();
+      m = gps.time.minute();
+      s = gps.time.second();
+    }
   } else {
-    sdworking = 0;
+    gpsLat = gpsLng = gpsAlt = gpsSpeed = 0;
+    gpsSats = 0;
+    h = m = s = 0;
   }
 
   String line = String(temperature) + ","
@@ -210,7 +304,7 @@ void loop() {
     + (pressure / 100.0) + ","
     + (altitude - baselineAltitude) + ","
     + ax + "," + ay + "," + az + ","
-    + sdworking + ","
+    + (sensorWorkingSD ? 1 : 0) + ","
     + gpsLat + "," 
     + gpsLng + ","
     + gpsAlt + ","
@@ -219,13 +313,20 @@ void loop() {
     + h + ","
     + m + ","
     + s;
-  
-  File myFile = SD.open("test.txt", FILE_WRITE);
-  if (myFile) {
-    myFile.println(line);
-    myFile.close();
-  } else {
-    Serial.println("Error opening test.txt");
+
+  if (sensorWorkingSD) {
+    File myFile = SD.open("test.txt", FILE_WRITE);
+    if (myFile) {
+      myFile.println(line);
+      myFile.close();
+    } else {
+      sensorWorkingSD = false;
+      Serial.println("Error opening test.txt, marking SD as lost.");
+      loraSerial.println("0");
+      Serial.println("Sent 0 over LoRa for SD lost (file open failed).");
+      delay(50);
+      return;
+    }
   }
 
   loraSerial.println(line);
